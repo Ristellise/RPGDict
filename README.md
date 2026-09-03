@@ -1,15 +1,10 @@
-# RPGdict — Japanese dictionary popup for RPG Maker MV/MZ games
+# RPGdict
 
-A right-click (or hold-key / long-press) Japanese → English dictionary popup
-that works in **any** RPG Maker MV or MZ game. One plugin, one data file,
-no setup beyond dropping them in.
+RPGdict is a *Japanese* dictionary popup for **any** RPG Maker MV & MZ game. It works by hooking at the `Bitmap.prototype.drawText` layer and basically is able to peek into all messages windows, name boxes, choices and most windows\*.
 
-Works on top of a text-capture layer that records every string drawn through
-`Bitmap.prototype.drawText` (the chokepoint all MV/MZ text goes through), so it
-covers message windows, name boxes, choices, help windows, status windows,
-battle log, text pictures, and mahjong/plugin windows alike.
+\*Images are not supported for obvious reasons. OCR would be needed at that point.
 
-## What's in here
+## Plugin Structure
 
 ```
 RPGdict/
@@ -21,18 +16,18 @@ RPGdict/
     └── jmdict_to_compact.py           JMdict XML ("NG" format) -> compact JSON
 ```
 
-Everything lives in `js/plugins/` — the dictionary is read from beside the
-plugin file.
+All you need is the `js/plugins` folder. Instructions on installation is below in [Install](#install) section.
 
 ## Install
 
-1. Copy both files into the game's `js/plugins/` folder — `www/js/plugins/`
-   in MV games, `js/plugins/` in MZ games:
+1. Download the entire git repo. [Download Link](https://github.com/Ristellise/RPGDict/archive/refs/heads/main.zip)
 
-   - `JPDicPopup.js`
-   - `jmdict-compact.json`
+2. Copy the following files into the game's `js/plugins/` folder (MZ) or `www/js/plugins/` for MV Games:
 
-2. Open `js/plugins.js` and add one line to the `$plugins` array — **at the
+   - `js/plugins/JPDicPopup.js`
+   - `js/plugins/jmdict-compact.json`
+
+3. Open `js/plugins.js` and add one line to the `$plugins` array — **at the
    end** (the plugin must load after all other plugins so its aliases wrap
    last). Mind the comma after the previous entry:
 
@@ -40,8 +35,7 @@ plugin file.
    {"name":"JPDicPopup","status":true,"description":"Japanese dictionary popup with built-in JMdict","parameters":{}},
    ```
 
-That's it — all defaults apply, and the dictionary is picked up automatically
-on the first lookup. To tweak settings, put any of these in `parameters`:
+That's it! To tweak settings, put any of these in `parameters`:
 
 ```js
 "trigger":"auto", "popupWidth":"420", "popupFontSize":"13", "maxCandidates":"10",
@@ -49,24 +43,29 @@ on the first lookup. To tweak settings, put any of these in `parameters`:
 "follow":"true", "debug":"0", "useJmdict":"true"
 ```
 
-(You can also skip the manual edit: open the game in RPG Maker MZ, open
-**Tools → Plugin Manager**, and add `JPDicPopup` there — it writes the
-plugins.js entry for you. Just make sure it's at the bottom of the list.)
-
-Upgrading: overwrite both files. Your plugins.js entry and its parameters
-stay as they are.
+If you want to include it into your game, open it up in RPG Maker engine and enter `Tools -> Plugin Manager` and add `JPDicPopup`.
 
 ## Using it
 
-The trigger adapts to the device:
+The default interaction is a **toggle**: press `` ` `` (tilde) to turn the
+dictionary ON, then click any text to look it up. Press it again to turn it
+OFF — with the dictionary off, the game behaves as if the plugin wasn't
+there.
 
-| Device | Gesture |
-|--------|---------|
-| Mouse | **Right-click** any text, or **hold C + left-click** |
-| Touch | **Long-press** (~450 ms) any text |
+| Device | Dictionary ON |
+--------|---------------|
+| Mouse | Left-click (or right-click) any text |
+| Touch | Tap any text |
 
-- While holding the modifier (C) with the popup open, the popup **follows
-  the cursor**, switching to whatever word is under it.
+| Device | Toggle how? |
+|--------|--------------|
+| Mouse | **`** (tilde) key |
+| Touch | Floating **辞** button (bottom-right) |
+
+- A toast (**辞書 ON / 辞書 OFF**) confirms each toggle; a small badge
+  stays on screen while the dictionary is ON.
+- While ON, clicks on text are consumed (text doesn't advance); clicks not
+  on text pass through, so the game keeps working normally.
 - Clicking a different word while the popup is open **refreshes** it.
 - Candidate chips at the top of the popup switch the lookup to that exact
   term. With the built-in JMdict dictionary active, chips are pre-filtered to
@@ -74,23 +73,26 @@ The trigger adapts to the device:
   lookup handler the full raw candidate list is kept (it may resolve
   anything).
 - `Esc` or clicking elsewhere closes the popup.
-- Quick taps still advance text — the touch layer replays them into the
-  engine; only long-presses are consumed.
 
 Inflected words resolve through a heuristic deinflector (godan/ichidan
 passive, causative, te/ta/nai/masu forms, suru/kuru, i-adjectives, chained),
-so 犰される → 犰す, 勃起した → 勃起, イク → 行く, etc.
+so 食べた → 食べる, 走った → 走る, 読まれる → 読む, etc.
+
+Alternative trigger modes (for games that bind `` ` ``): `right` (right-click
+anywhere, anytime), `auto` (right-click + hold-key on mouse, long-press on
+touch), `key` (hold key + click), `hold` (long-press), `left` (click when the
+message is idle).
 
 ## Plugin parameters
 
 | Parameter | Default | Meaning |
 |-----------|---------|---------|
-| `trigger` | `auto` | `auto` / `right` / `key` / `hold` / `left` |
+| `trigger` | `toggle` | `toggle` / `auto` / `right` / `key` / `hold` / `left` |
 | `popupWidth` | `420` | popup width in px |
 | `popupFontSize` | `13` | popup body font size |
 | `maxCandidates` | `10` | candidate chips shown |
 | `highlight` | `true` | highlight the clicked row |
-| `key` | `KeyC` | modifier key (`C`, `Ctrl`, `Shift`, `F1`… comma-separated) |
+| `key` | `` ` `` | toggle / modifier key — event.code names, single letters, digits, ctrl/shift/alt, `~` for tilde (comma-separate alternates) |
 | `consumeKey` | `false` | swallow the modifier key from the game |
 | `holdDelay` | `450` | long-press delay in ms |
 | `follow` | `true` | popup follows cursor/finger while held |
@@ -111,7 +113,9 @@ variants of both. `save/jmdict-compact.json` from older installs still works.
 - `JPDic.hitTest(x, y)` / `JPDic.openAt(x, y, ctx)` — programmatic lookup.
 - `JPDic.candidates(line, i)` / `JPDic.deinflect(term)` — the term machinery.
 - `JPDic.on(event, fn)` / `off` — events: `message-start`, `message-end`,
-  `popup-open`, `popup-close`.
+  `popup-open`, `popup-close`, `toggle`.
+- `JPDic.armed` / `JPDic.setArmed(bool)` — in toggle mode: whether the
+  dictionary is currently ON (readable / settable programmatically).
 - `JPDic.debug` / `JPDic.dumpLog()` / `JPDic.clearLog()` / `JPDic.log()` —
   debug logging.
 - `JPDic.enabled` — master switch.
@@ -122,18 +126,21 @@ variants of both. `save/jmdict-compact.json` from older installs still works.
 "NG" format (gloss-only export, entities pre-resolved):
 
 ```sh
+uv run tools/jmdict_to_compact.py /path/to/JMdict_e_NG [output.json]
+# If you don't have uv venv setup, the following also works
 python3 tools/jmdict_to_compact.py /path/to/JMdict_e_NG [output.json]
 ```
 
-Defaults: output goes to `js/plugins/jmdict-compact.json` beside the plugin.
-Requires `lxml` and `orjson` (`pip install lxml orjson`). Takes ~5 seconds.
+`lxml` and `orjson` (`pip install lxml orjson`) are required as extenal dependencies.
+
+If your `JMdict_e_NG` is compressed as a `.gz` file, decompress it first before running the tool. By default, output goes to `js/plugins/jmdict-compact.json` beside the plugin.
 
 Output format:
 
 ```json
 {
-  "e": [ ["犯す", "おかす", ["(v5t,vt) to commit (a crime)", "to rape"]], ... ],
-  "k": { "犯す": [0, 1, 2], "おかす": [0, 3], ... }
+  "e": [ ["寿司", "すし", ["(n,food) sushi", "range of dishes made with vinegared rice combined with fish, vegetables, egg, etc. (expl)"]], ... ],
+  "k": { "寿司": [55915], "すし": [55915], ... }
 }
 ```
 
@@ -163,3 +170,17 @@ live; level 2 also buffers every recorded text draw.
   `Bitmap.prototype.drawText` / `Window_Message.startMessage`.
 - Some games use mouse-right / mouse-down to advance text; the hold-key and
   long-press triggers exist for those.
+
+## Credits & disclaimer
+
+This plugin was mostly developed with GLM-5.3 as well as [pi coding agent](https://github.com/earendil-works/pi). Most of the readme is from GLM 5.3 as well.
+
+JMdict `jmdict-compact.json` is the work of the [Electronic Dictionary Research and Development Group (EDRDG)](https://www.edrdg.org).
+
+I made this plugin because I don't want to setup a entire anki setup and just want to be able to read what is on screen without taking screenshots and sending over to google translate on my phone.
+
+Is that weird? Probably.
+
+## Loicense
+
+MIT. Yes, I'm not putting a entire LICENSE file, the whole thing is just MIT. except the `jmdict-compact.json` dictionary. That's under CC-BY-SA.

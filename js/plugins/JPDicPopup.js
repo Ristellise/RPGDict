@@ -4,18 +4,25 @@
 
 /*:
  * @target MZ
- * @plugindesc v1.3.2 Capture all text drawn to the screen with exact pixel
+ * @plugindesc v1.4.0 Capture all text drawn to the screen with exact pixel
  * positions, then right-click any text to fire a hookable Japanese dictionary
  * popup. Exposes a global `JPDic` API.
  * @author pi
  *
  * @param trigger
  * @text Lookup trigger
- * @desc auto detects the device; see help for details
+ * @desc toggle (default): ` toggles dictionary mode; auto detects the
+ * device; see help for details
  * @type select
  * @option Auto (recommended)
  * @value auto
  * @option Right click only
+ * @value right
+ * @option Toggle mode (` key / floating button)
+ * @value toggle
+ * @option Auto-detect (right click + hold-key / long-press)
+ * @value auto
+ * @option Right-click only
  * @value right
  * @option Left click when idle (message window only)
  * @value left
@@ -25,15 +32,16 @@
  * @value longpress
  * @option All gestures
  * @value all
- * @default auto
+ * @default toggle
  *
  * @param key
- * @text Modifier key
- * @desc Key(s) held to arm the lookup click. Accepts event.code names
- * ("KeyC", "F1"), single letters ("C"), digits, ctrl/shift/alt.
- * Comma-separate alternates: "KeyC,KeyV"
+ * @text Toggle / modifier key
+ * @desc In toggle mode: the key that turns the dictionary on/off. In other
+ * modes: the key held to arm the lookup click. Accepts event.code names
+ * ("Backquote", "KeyC", "F1"), single letters ("C"), digits, ctrl/shift/
+ * alt, or "~" for tilde. Comma-separate alternates: "Backquote,KeyC"
  * @type string
- * @default KeyC
+ * @default Backquote
  *
  * @param consumeKey
  * @text Hide modifier key from game
@@ -130,7 +138,16 @@
  *
  * TRIGGERS / GESTURES
  *
- * trigger=auto (default) detects the device once at boot:
+ * trigger=toggle (default) is the simplest interaction: press ` (or click
+ * the floating 辞 button on touch screens) to turn the dictionary ON, then
+ * click/tap any text to look it up. Press it again to turn it OFF and the
+ * game behaves as if the plugin wasn't there. A toast (辞書 ON / 辞書 OFF)
+ * confirms each toggle; a small badge stays while ON.
+ *  - armed + click/tap on text -> lookup (consumed; text doesn't advance)
+ *  - armed + click/tap elsewhere -> passes through to the game normally
+ *  - popup open + click other text -> refreshes; click elsewhere -> closes
+ *
+ * trigger=auto detects the device once at boot:
  *  - Mouse-style device (hover: hover)      -> right-click AND hold-key+click
  *  - Touch screen (hover: none, touch points) -> long-press a word
  *  - Both (e.g. touch laptop)               -> all of the above
@@ -224,6 +241,7 @@
  *                           "message-end"    {}
  *                           "popup-open"     {ctx}
  *                           "popup-close"    {}
+ *                           "toggle"        {on}   (trigger=toggle)
  *   JPDic.off(ev, fn)     Unsubscribe.
  *   JPDic.current         {raw, lines, speaker, face} of the current message.
  *   JPDic.currentFragments() -> all visible text fragments as
@@ -238,7 +256,10 @@
  *   JPDic.close()        Close the popup.
  *   JPDic.isOpen()       Popup state.
  *   JPDic.capabilities   Detected device: {hover, touch}.
- *   JPDic.gestures       Resolved gesture set: {right, left, key, hold}.
+ *   JPDic.gestures       Resolved gesture set: {right, left, key, hold,
+ *                        toggle}.
+ *   JPDic.armed          In toggle mode: whether the dictionary is ON.
+ *   JPDic.setArmed(b)    Turn the dictionary ON/OFF programmatically.
  *   JPDic.enabled        Master switch (default true). Set false to disable
  *                        all capturing and input handling.
  *   JPDic.debug          Debug log level (also plugin param "debug"):
@@ -281,12 +302,12 @@
     const P = PluginManager.parameters(PLUGIN_NAME);
 
     const OPT = {
-        trigger: String(P.trigger || "auto"),
+        trigger: String(P.trigger || "toggle"),
         popupWidth: Math.max(200, Math.min(900, parseInt(P.popupWidth, 10) || 420)),
         fontSize: Math.max(10, Math.min(24, parseInt(P.popupFontSize, 10) || 13)),
         maxCandidates: Math.max(1, Math.min(32, parseInt(P.maxCandidates, 10) || 10)),
         highlight: String(P.highlight) !== "false",
-        key: P.key === undefined ? "KeyC" : String(P.key),
+        key: P.key === undefined ? "Backquote" : String(P.key),
         consumeKey: String(P.consumeKey) === "true",
         holdDelay: Math.max(150, Math.min(1500, parseInt(P.holdDelay, 10) || 450)),
         follow: String(P.follow) !== "false",
@@ -312,6 +333,8 @@
 
     function resolveGestures() {
         switch (OPT.trigger) {
+            case "toggle":
+                return { right: false, left: false, key: false, hold: false, toggle: true };
             case "right":
                 return { right: true, left: false, key: false, hold: false };
             case "left":
@@ -442,12 +465,19 @@
     let highlightEl = null;
 
     const JPDic = {
-        version: "1.3.2",
+        version: "1.4.0",
         enabled: true,
         current: null,
         capabilities: CAP,
         gestures: GESTURES,
 
+        get armed() {
+            return dictArmed;
+        },
+
+        setArmed(on) {
+            setArmed(on);
+        },
         setLookup(fn) {
             if (fn === null || fn === undefined) {
                 lookupHandler = null;
@@ -1333,6 +1363,63 @@
     overflow: hidden;
     text-overflow: ellipsis;
 }
+@keyframes jpdic-fade {
+    0% { opacity: 1; }
+    70% { opacity: 1; }
+    100% { opacity: 0; }
+}
+#jpdic-toast {
+    position: fixed;
+    top: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1b1e26;
+    color: #cdd3e0;
+    border: 1px solid #3a3f4d;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font: 13px/1.4 sans-serif;
+    z-index: 10001;
+    pointer-events: none;
+    animation: jpdic-fade 1.5s forwards;
+}
+#jpdic-badge {
+    position: fixed;
+    right: 10px;
+    bottom: 10px;
+    background: rgba(27, 30, 38, 0.85);
+    color: #ffd479;
+    border: 1px solid #3a3f4d;
+    border-radius: 6px;
+    padding: 3px 8px;
+    font: 12px sans-serif;
+    z-index: 9998;
+    pointer-events: none;
+}
+#jpdic-toggle-btn {
+    position: fixed;
+    right: 12px;
+    bottom: 12px;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: rgba(27, 30, 38, 0.7);
+    border: 1px solid #4a5060;
+    color: #8b8f9c;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font: 20px serif;
+    z-index: 9998;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+}
+#jpdic-toggle-btn.jpdic-armed {
+    background: rgba(50, 60, 90, 0.9);
+    border-color: #7ec4ff;
+    color: #7ec4ff;
+}
 `;
 
     let styleEl = null;
@@ -1822,6 +1909,10 @@
                 if (lower === "ctrl" || lower === "control") return "ControlLeft";
                 if (lower === "shift") return "ShiftLeft";
                 if (lower === "alt") return "AltLeft";
+                if (lower === "~" || lower === "`" || lower === "tilde" ||
+                    lower === "backquote") {
+                    return "Backquote";
+                }
                 if (/^f([1-9]|1[0-2])$/i.test(k)) return "F" + k.slice(1);
                 return k; // event.code names are case-sensitive (KeyX, DigitN, Comma ...)
             })
@@ -1831,8 +1922,85 @@
     const MOD_KEYS = normalizeKeyNames(OPT.key);
     let keyHeld = false;
 
+    // ---- toggle mode (trigger: "toggle") ---------------------------------
+
+    let dictArmed = false;   // dictionary mode on/off
+    let armedTouch = false;   // this touch was consumed by the dictionary
+    let toastEl = null;
+    let badgeEl = null;
+    let toggleBtnEl = null;
+
+    function inToggleBtn(target) {
+        return !!(target && target.closest &&
+            target.closest("#jpdic-toggle-btn"));
+    }
+
+    function firstTouch(e) {
+        return (e.changedTouches && e.changedTouches[0]) || null;
+    }
+
+    function showToast(msg) {
+        try {
+            if (toastEl) toastEl.remove();
+            toastEl = el("div", null, document.body);
+            toastEl.id = "jpdic-toast";
+            toastEl.textContent = msg;
+            setTimeout(() => {
+                if (toastEl) {
+                    toastEl.remove();
+                    toastEl = null;
+                }
+            }, 1500);
+        } catch (e) {
+            // ignore
+        }
+    }
+
+    function ensureToggleButton() {
+        if (!GESTURES.toggle || !CAP.touch || toggleBtnEl) return;
+        toggleBtnEl = el("div", null, document.body);
+        toggleBtnEl.id = "jpdic-toggle-btn";
+        toggleBtnEl.textContent = "辞";
+    }
+
+    function refreshBadge() {
+        if (!GESTURES.toggle) return;
+        // desktop: tiny persistent badge while armed (touch: button state)
+        if (!CAP.touch) {
+            if (dictArmed && !badgeEl) {
+                badgeEl = el("div", null, document.body);
+                badgeEl.id = "jpdic-badge";
+                badgeEl.textContent = "辞書 ON";
+            } else if (!dictArmed && badgeEl) {
+                badgeEl.remove();
+                badgeEl = null;
+            }
+        }
+        if (toggleBtnEl) {
+            toggleBtnEl.className = dictArmed ? "jpdic-armed" : "";
+        }
+    }
+
+    function setArmed(on) {
+        dictArmed = !!on;
+        if (!dictArmed) {
+            armedTouch = false;
+            closePopup();
+        }
+        refreshBadge();
+        showToast(dictArmed ? "辞書 ON" : "辞書 OFF");
+        dbg(1, "toggle", "dictionary " + (dictArmed ? "ON" : "OFF"));
+        fire("toggle", { on: dictArmed });
+    }
+
     function onKeyDown(e) {
         if (MOD_KEYS.includes(e.code)) {
+            if (GESTURES.toggle) {
+                // toggle key: turn the dictionary on/off (ignore key repeat)
+                if (JPDic.enabled && !e.repeat) setArmed(!dictArmed);
+                if (JPDic.enabled && OPT.consumeKey) consume(e);
+                return;
+            }
             keyHeld = true;
             if (JPDic.enabled && OPT.consumeKey) {
                 consume(e);
@@ -1898,6 +2066,39 @@
     function onMouseDown(e) {
         if (!JPDic.enabled) return;
         if (e.button !== 0) return;
+
+        // toggle mode: the floating button toggles the dictionary
+        if (inToggleBtn(e.target)) {
+            consume(e);
+            setArmed(!dictArmed);
+            return;
+        }
+
+        // toggle mode armed: any left click on text looks up; clicks not
+        // on text pass through so the game still gets them
+        if (GESTURES.toggle && dictArmed) {
+            if (popupEl) {
+                if (inPopup(e.target)) {
+                    consume(e);
+                    return;
+                }
+                const hit = hitTest(e.clientX, e.clientY);
+                if (hit) {
+                    consume(e);
+                    pendingLeft = { x: e.clientX, y: e.clientY, hit: hit, via: "left" };
+                } else {
+                    closePopup();
+                    consume(e);
+                }
+                return;
+            }
+            const hit = hitTest(e.clientX, e.clientY);
+            if (hit) {
+                consume(e);
+                pendingLeft = { x: e.clientX, y: e.clientY, hit: hit, via: "left" };
+            }
+            return;
+        }
 
         if (popupEl) {
             // popup handles its own events; the game must not see these clicks
@@ -1990,7 +2191,11 @@
     function onMouseDownRight(e) {
         if (!JPDic.enabled || e.button !== 2) return;
         if (popupEl) return; // handled by contextmenu
-        if (!GESTURES.right) return;
+        if (GESTURES.toggle) {
+            if (!dictArmed) return; // disarmed: no interference at all
+        } else if (!GESTURES.right) {
+            return;
+        }
         const hit = hitTest(e.clientX, e.clientY);
         if (hit) {
             dbg(1, "mouse", "right mousedown on " + JSON.stringify(hit.text) + " → pending");
@@ -2001,6 +2206,7 @@
 
     function onContextMenu(e) {
         if (!JPDic.enabled) return;
+        if (GESTURES.toggle && !dictArmed) return; // off: pass through
         dbg(1, "mouse", "contextmenu @(" + e.clientX + "," + e.clientY + ")");
         if (inPopup(e.target)) {
             dbg(1, "mouse", "  inside popup → consume");
@@ -2058,6 +2264,7 @@
 
     function onTouchStart(e) {
         if (!JPDic.enabled) return;
+        if (GESTURES.toggle) return onTouchStartToggle(e);
         if (!GESTURES.hold) return;
 
         let swallowed = false;
@@ -2113,7 +2320,52 @@
         }, OPT.holdDelay);
     }
 
+    // toggle mode touch: armed taps on text open instantly; all other taps
+    // pass through untouched (tap-to-advance keeps working)
+    function onTouchStartToggle(e) {
+        // floating button: engine must not see this tap
+        if (inToggleBtn(e.target)) {
+            consume(e);
+            setArmed(!dictArmed);
+            return;
+        }
+        if (!dictArmed) return; // dictionary off: full pass-through
+
+        if (popupEl) {
+            if (inPopup(e.target)) {
+                consume(e);
+                return;
+            }
+            consume(e);
+            const t = firstTouch(e);
+            const hit = t ? hitTest(t.clientX, t.clientY) : null;
+            if (hit) {
+                armedTouch = true;
+                openPopup(buildContext(hit), t.clientX, t.clientY);
+            } else {
+                closePopup();
+                armedTouch = true; // the dismissing tap stays ours
+            }
+            return;
+        }
+
+        const t = firstTouch(e);
+        if (!t) return;
+        const hit = hitTest(t.clientX, t.clientY);
+        if (hit) {
+            consume(e);
+            armedTouch = true;
+            openPopup(buildContext(hit), t.clientX, t.clientY);
+        }
+        // else: not on text — pass through (tap advances the game)
+    }
+
     function onTouchMove(e) {
+        // toggle mode: our touch stays ours until it ends
+        if (armedTouch) {
+            consume(e);
+            return;
+        }
         // follow: popup tracks the word under the finger
         if (followState && followState.source === "touch" && popupEl) {
             const t = e.changedTouches ? e.changedTouches[0] : null;
@@ -2149,6 +2401,13 @@
     }
 
     function onTouchEnd(e) {
+        if (GESTURES.toggle) {
+            if (armedTouch) {
+                armedTouch = false;
+                consume(e);
+            }
+            return;
+        }
         if (followState && followState.source === "touch") {
             // finger released after a lookup: popup stays put
             followState = null;
@@ -2172,6 +2431,13 @@
     }
 
     function onTouchCancel(e) {
+        if (GESTURES.toggle) {
+            if (armedTouch) {
+                armedTouch = false;
+                consume(e);
+            }
+            return;
+        }
         const ph = pendingHold;
         pendingHold = null;
         if (ph) {
@@ -2192,6 +2458,7 @@
 
     function onBlur() {
         keyHeld = false;
+        armedTouch = false;
         if (pendingHold) {
             clearTimeout(pendingHold.timer);
             pendingHold = null;
@@ -2216,6 +2483,13 @@
     window.addEventListener("touchend", onTouchEnd, { capture: true, passive: false });
     window.addEventListener("touchcancel", onTouchCancel, { capture: true, passive: false });
 
+    // create the floating toggle button (touch devices, toggle mode)
+    try {
+        ensureToggleButton();
+    } catch (e) {
+        // ignore
+    }
+
     //=========================================================================
     // 9. Boot banner
     //=========================================================================
@@ -2227,6 +2501,10 @@
             SceneManager.__jpdicBanner = true;
             const gs = GESTURES;
             const names = [];
+            if (gs.toggle) {
+                names.push("toggle: " + (MOD_KEYS[0] || "?") +
+                    (CAP.touch ? " / floating button" : ""));
+            }
             if (gs.right) names.push("right-click");
             if (gs.key) names.push("hold-" + (MOD_KEYS[0] || "?") + "+click");
             if (gs.left) names.push("click-when-idle");
